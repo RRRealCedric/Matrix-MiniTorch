@@ -5,6 +5,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 #define EPSILON 1e-9
 
@@ -290,6 +291,7 @@ static int TestOptimizedUtilities(void)
 {
     Matrix A, B, AT0, AT1, ScaleTmp, AddTmp;
     size_t profile_count = 0;
+    const MatrixProfileRecord *records = NULL;
     int pass = 1;
 
     MatrixInit(&A);
@@ -337,9 +339,14 @@ static int TestOptimizedUtilities(void)
     MatrixProfileEnable(1);
     MatrixProfileClear();
     MatrixMultiplyAuto(&A, &AT0, &ScaleTmp);
-    MatrixProfileGetRecords(&profile_count);
+    records = MatrixProfileGetRecords(&profile_count);
     pass = pass && profile_count > 0;
     PrintPassFail("profiling records enabled kernels", pass);
+
+    pass = pass && records != NULL;
+    pass = pass && records[0].requested_backend_name != NULL;
+    pass = pass && records[0].backend_name != NULL;
+    PrintPassFail("profiling exposes backend names", pass);
 
     MatrixProfileClear();
     MatrixProfileGetRecords(&profile_count);
@@ -353,6 +360,90 @@ static int TestOptimizedUtilities(void)
     MatrixFree(&AT1);
     MatrixFree(&ScaleTmp);
     MatrixFree(&AddTmp);
+    return pass;
+}
+
+static int TestAutoDispatchPolicy(void)
+{
+    Matrix A_small, B_small, C_small;
+    Matrix A_mid, B_mid, C_mid;
+    Matrix A_large, B_large, C_large;
+    size_t profile_count = 0;
+    const MatrixProfileRecord *records = NULL;
+    int pass = 1;
+    size_t last = 0;
+
+    MatrixInit(&A_small);
+    MatrixInit(&B_small);
+    MatrixInit(&C_small);
+    MatrixInit(&A_mid);
+    MatrixInit(&B_mid);
+    MatrixInit(&C_mid);
+    MatrixInit(&A_large);
+    MatrixInit(&B_large);
+    MatrixInit(&C_large);
+
+    Require(MatrixCreate(&A_small, 64, 64), "MatrixCreate(A_small)");
+    Require(MatrixCreate(&B_small, 64, 64), "MatrixCreate(B_small)");
+    Require(MatrixCreate(&C_small, 64, 64), "MatrixCreate(C_small)");
+    Require(MatrixCreate(&A_mid, 256, 256), "MatrixCreate(A_mid)");
+    Require(MatrixCreate(&B_mid, 256, 256), "MatrixCreate(B_mid)");
+    Require(MatrixCreate(&C_mid, 256, 256), "MatrixCreate(C_mid)");
+    Require(MatrixCreate(&A_large, 800, 800), "MatrixCreate(A_large)");
+    Require(MatrixCreate(&B_large, 800, 800), "MatrixCreate(B_large)");
+    Require(MatrixCreate(&C_large, 800, 800), "MatrixCreate(C_large)");
+
+    MatrixFillSequence(&A_small, 1.0, 0.01);
+    MatrixFillSequence(&B_small, 2.0, 0.01);
+    MatrixFillSequence(&A_mid, 1.0, 0.01);
+    MatrixFillSequence(&B_mid, 2.0, 0.01);
+    MatrixFillSequence(&A_large, 1.0, 0.001);
+    MatrixFillSequence(&B_large, 2.0, 0.001);
+
+    printf("\n[10] Auto dispatch policy\n");
+
+    MatrixProfileEnable(1);
+    MatrixProfileClear();
+    BackendSetType(BACKEND_SIMD);
+    pass = pass && MatrixMultiplyAuto(&A_small, &B_small, &C_small) == MATRIX_SUCCESS;
+    records = MatrixProfileGetRecords(&profile_count);
+    last = profile_count > 0 ? profile_count - 1 : 0;
+    pass = pass && profile_count >= 1;
+    pass = pass && records != NULL && records[last].backend_name != NULL &&
+           strcmp(records[last].backend_name, "ikj") == 0 &&
+           records[last].block_size == 0;
+    PrintPassFail("auto picks IKJ for small matrices", pass);
+
+    MatrixProfileClear();
+    pass = pass && MatrixMultiplyAuto(&A_mid, &B_mid, &C_mid) == MATRIX_SUCCESS;
+    records = MatrixProfileGetRecords(&profile_count);
+    last = profile_count > 0 ? profile_count - 1 : 0;
+    pass = pass && profile_count >= 1;
+    pass = pass && records != NULL && records[last].backend_name != NULL &&
+           strcmp(records[last].backend_name, "transposeB") == 0;
+    PrintPassFail("auto picks transposeB for medium matrices", pass);
+
+    MatrixProfileClear();
+    pass = pass && MatrixMultiplyAuto(&A_large, &B_large, &C_large) == MATRIX_SUCCESS;
+    records = MatrixProfileGetRecords(&profile_count);
+    last = profile_count > 0 ? profile_count - 1 : 0;
+    pass = pass && profile_count >= 1;
+    pass = pass && records != NULL && records[last].backend_name != NULL &&
+           strcmp(records[last].backend_name, "blocked") == 0 &&
+           records[last].block_size == 64;
+    PrintPassFail("auto picks blocked with large block size for large matrices", pass);
+    MatrixProfileEnable(0);
+    BackendSetType(BACKEND_NAIVE);
+
+    MatrixFree(&A_small);
+    MatrixFree(&B_small);
+    MatrixFree(&C_small);
+    MatrixFree(&A_mid);
+    MatrixFree(&B_mid);
+    MatrixFree(&C_mid);
+    MatrixFree(&A_large);
+    MatrixFree(&B_large);
+    MatrixFree(&C_large);
     return pass;
 }
 
@@ -490,6 +581,7 @@ int main(void)
     pass = TestOptimizedUtilities() && pass;
     pass = TestErrorHandling() && pass;
     pass = TestLUAndSolvers() && pass;
+    pass = TestAutoDispatchPolicy() && pass;
 
     printf("\nOverall result: %s\n", pass ? "PASS" : "FAIL");
     return pass ? 0 : 1;

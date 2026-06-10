@@ -1,10 +1,15 @@
 #include "matrix_optimized.h"
 
+#include <math.h>
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
 
-#define MATRIX_AUTO_BLOCK_SIZE 32
-#define MATRIX_AUTO_BLOCK_THRESHOLD 64
+#define MATRIX_AUTO_SMALL_THRESHOLD 192
+#define MATRIX_AUTO_MEDIUM_THRESHOLD 640
+#define MATRIX_AUTO_SMALL_BLOCK_SIZE 16
+#define MATRIX_AUTO_MEDIUM_BLOCK_SIZE 32
+#define MATRIX_AUTO_LARGE_BLOCK_SIZE 64
 
 static int profile_enabled = 0;
 static MatrixProfileRecord profile_records[MATRIX_PROFILE_MAX_RECORDS];
@@ -16,10 +21,12 @@ static double ProfileNowSeconds(void)
 }
 
 static void ProfileRecord(const char *kernel_name,
+                          const char *requested_backend_name,
                           const char *backend_name,
                           int m,
                           int n,
                           int k,
+                          int block_size,
                           double elapsed_seconds,
                           MatrixError error)
 {
@@ -31,10 +38,12 @@ static void ProfileRecord(const char *kernel_name,
 
     record = &profile_records[profile_count++];
     record->kernel_name = kernel_name;
+    record->requested_backend_name = requested_backend_name;
     record->backend_name = backend_name;
     record->m = m;
     record->n = n;
     record->k = k;
+    record->block_size = block_size;
     record->elapsed_seconds = elapsed_seconds;
     record->error = error;
 }
@@ -81,16 +90,18 @@ void MatrixProfilePrint(FILE *out)
         out = stdout;
     }
 
-    fprintf(out, "%-20s %-14s %-8s %-8s %-8s %-14s %-24s\n",
-            "kernel", "backend", "m", "n", "k", "seconds", "status");
+    fprintf(out, "%-20s %-14s %-14s %-8s %-8s %-8s %-10s %-14s %-24s\n",
+            "kernel", "requested", "backend", "m", "n", "k", "block", "seconds", "status");
     for (size_t i = 0; i < profile_count; ++i) {
         const MatrixProfileRecord *record = &profile_records[i];
-        fprintf(out, "%-20s %-14s %-8d %-8d %-8d %-14.6f %-24s\n",
+        fprintf(out, "%-20s %-14s %-14s %-8d %-8d %-8d %-10d %-14.6f %-24s\n",
                 record->kernel_name,
+                record->requested_backend_name,
                 record->backend_name,
                 record->m,
                 record->n,
                 record->k,
+                record->block_size,
                 record->elapsed_seconds,
                 MatrixErrorMessage(record->error));
     }
@@ -129,6 +140,36 @@ static int MinInt(int a, int b)
     return a < b ? a : b;
 }
 
+static int MatrixAutoChooseBlockSize(int m, int n, int k)
+{
+    if (m < MATRIX_AUTO_SMALL_THRESHOLD &&
+        n < MATRIX_AUTO_SMALL_THRESHOLD &&
+        k < MATRIX_AUTO_SMALL_THRESHOLD) {
+        return MATRIX_AUTO_SMALL_BLOCK_SIZE;
+    }
+    if (m < MATRIX_AUTO_MEDIUM_THRESHOLD &&
+        n < MATRIX_AUTO_MEDIUM_THRESHOLD &&
+        k < MATRIX_AUTO_MEDIUM_THRESHOLD) {
+        return MATRIX_AUTO_MEDIUM_BLOCK_SIZE;
+    }
+    return MATRIX_AUTO_LARGE_BLOCK_SIZE;
+}
+
+static const char *MatrixAutoChooseBackendName(int m, int n, int k)
+{
+    if (m < MATRIX_AUTO_SMALL_THRESHOLD &&
+        n < MATRIX_AUTO_SMALL_THRESHOLD &&
+        k < MATRIX_AUTO_SMALL_THRESHOLD) {
+        return "ikj";
+    }
+    if (m < MATRIX_AUTO_MEDIUM_THRESHOLD &&
+        n < MATRIX_AUTO_MEDIUM_THRESHOLD &&
+        k < MATRIX_AUTO_MEDIUM_THRESHOLD) {
+        return "transposeB";
+    }
+    return "blocked";
+}
+
 MatrixError MatrixMultiplyIKJ(const Matrix *A, const Matrix *B, Matrix *C)
 {
     int m;
@@ -139,7 +180,8 @@ MatrixError MatrixMultiplyIKJ(const Matrix *A, const Matrix *B, Matrix *C)
 
     MultiplyDims(A, B, &m, &n, &kdim);
     if (error != MATRIX_SUCCESS) {
-        ProfileRecord("matmul_ikj", BackendName(BACKEND_IKJ), m, n, kdim,
+        ProfileRecord("matmul_ikj", BackendName(BACKEND_IKJ), BackendName(BACKEND_IKJ),
+                      m, n, kdim, 0,
                       ProfileNowSeconds() - start, error);
         return error;
     }
@@ -151,13 +193,21 @@ MatrixError MatrixMultiplyIKJ(const Matrix *A, const Matrix *B, Matrix *C)
         for (int k = 0; k < A->column; ++k) {
             REAL aik = A->data[a_row + (size_t)k];
             size_t b_row = (size_t)k * (size_t)B->column;
-            for (int j = 0; j < B->column; ++j) {
+            int j = 0;
+            for (; j + 3 < B->column; j += 4) {
+                C->data[c_row + (size_t)j] += aik * B->data[b_row + (size_t)j];
+                C->data[c_row + (size_t)(j + 1)] += aik * B->data[b_row + (size_t)(j + 1)];
+                C->data[c_row + (size_t)(j + 2)] += aik * B->data[b_row + (size_t)(j + 2)];
+                C->data[c_row + (size_t)(j + 3)] += aik * B->data[b_row + (size_t)(j + 3)];
+            }
+            for (; j < B->column; ++j) {
                 C->data[c_row + (size_t)j] += aik * B->data[b_row + (size_t)j];
             }
         }
     }
 
-    ProfileRecord("matmul_ikj", BackendName(BACKEND_IKJ), m, n, kdim,
+    ProfileRecord("matmul_ikj", BackendName(BACKEND_IKJ), BackendName(BACKEND_IKJ),
+                  m, n, kdim, 0,
                   ProfileNowSeconds() - start, MATRIX_SUCCESS);
     return MATRIX_SUCCESS;
 }
@@ -172,12 +222,14 @@ MatrixError MatrixMultiplyBlocked(const Matrix *A, const Matrix *B, Matrix *C, i
 
     MultiplyDims(A, B, &m, &n, &kdim);
     if (error != MATRIX_SUCCESS) {
-        ProfileRecord("matmul_blocked", BackendName(BACKEND_BLOCKED), m, n, kdim,
+        ProfileRecord("matmul_blocked", BackendName(BACKEND_BLOCKED), BackendName(BACKEND_BLOCKED),
+                      m, n, kdim, block_size,
                       ProfileNowSeconds() - start, error);
         return error;
     }
     if (block_size <= 0) {
-        ProfileRecord("matmul_blocked", BackendName(BACKEND_BLOCKED), m, n, kdim,
+        ProfileRecord("matmul_blocked", BackendName(BACKEND_BLOCKED), BackendName(BACKEND_BLOCKED),
+                      m, n, kdim, block_size,
                       ProfileNowSeconds() - start, MATRIX_ERROR_INVALID_ARGUMENT);
         return MATRIX_ERROR_INVALID_ARGUMENT;
     }
@@ -196,7 +248,14 @@ MatrixError MatrixMultiplyBlocked(const Matrix *A, const Matrix *B, Matrix *C, i
                     for (int k = kk; k < k_end; ++k) {
                         REAL aik = A->data[a_row + (size_t)k];
                         size_t b_row = (size_t)k * (size_t)B->column;
-                        for (int j = jj; j < j_end; ++j) {
+                        int j = jj;
+                        for (; j + 3 < j_end; j += 4) {
+                            C->data[c_row + (size_t)j] += aik * B->data[b_row + (size_t)j];
+                            C->data[c_row + (size_t)(j + 1)] += aik * B->data[b_row + (size_t)(j + 1)];
+                            C->data[c_row + (size_t)(j + 2)] += aik * B->data[b_row + (size_t)(j + 2)];
+                            C->data[c_row + (size_t)(j + 3)] += aik * B->data[b_row + (size_t)(j + 3)];
+                        }
+                        for (; j < j_end; ++j) {
                             C->data[c_row + (size_t)j] += aik * B->data[b_row + (size_t)j];
                         }
                     }
@@ -205,7 +264,8 @@ MatrixError MatrixMultiplyBlocked(const Matrix *A, const Matrix *B, Matrix *C, i
         }
     }
 
-    ProfileRecord("matmul_blocked", BackendName(BACKEND_BLOCKED), m, n, kdim,
+    ProfileRecord("matmul_blocked", BackendName(BACKEND_BLOCKED), BackendName(BACKEND_BLOCKED),
+                  m, n, kdim, block_size,
                   ProfileNowSeconds() - start, MATRIX_SUCCESS);
     return MATRIX_SUCCESS;
 }
@@ -221,7 +281,7 @@ MatrixError MatrixMultiplyTransposeB(const Matrix *A, const Matrix *B, Matrix *C
 
     MultiplyDims(A, B, &m, &n, &kdim);
     if (error != MATRIX_SUCCESS) {
-        ProfileRecord("matmul_transposeB", "pure_c", m, n, kdim,
+        ProfileRecord("matmul_transposeB", "transposeB", "transposeB", m, n, kdim, 0,
                       ProfileNowSeconds() - start, error);
         return error;
     }
@@ -229,7 +289,7 @@ MatrixError MatrixMultiplyTransposeB(const Matrix *A, const Matrix *B, Matrix *C
     MatrixInit(&BT);
     error = MatrixCreate(&BT, B->column, B->row);
     if (error != MATRIX_SUCCESS) {
-        ProfileRecord("matmul_transposeB", "pure_c", m, n, kdim,
+        ProfileRecord("matmul_transposeB", "transposeB", "transposeB", m, n, kdim, 0,
                       ProfileNowSeconds() - start, error);
         return error;
     }
@@ -237,7 +297,7 @@ MatrixError MatrixMultiplyTransposeB(const Matrix *A, const Matrix *B, Matrix *C
     error = MatrixTranspose(B, &BT);
     if (error != MATRIX_SUCCESS) {
         MatrixFree(&BT);
-        ProfileRecord("matmul_transposeB", "pure_c", m, n, kdim,
+        ProfileRecord("matmul_transposeB", "transposeB", "transposeB", m, n, kdim, 0,
                       ProfileNowSeconds() - start, error);
         return error;
     }
@@ -257,7 +317,7 @@ MatrixError MatrixMultiplyTransposeB(const Matrix *A, const Matrix *B, Matrix *C
     }
 
     MatrixFree(&BT);
-    ProfileRecord("matmul_transposeB", "pure_c", m, n, kdim,
+    ProfileRecord("matmul_transposeB", "transposeB", "transposeB", m, n, kdim, 0,
                   ProfileNowSeconds() - start, MATRIX_SUCCESS);
     return MATRIX_SUCCESS;
 }
@@ -272,7 +332,7 @@ MatrixError MatrixMultiplyKahan(const Matrix *A, const Matrix *B, Matrix *C)
 
     MultiplyDims(A, B, &m, &n, &kdim);
     if (error != MATRIX_SUCCESS) {
-        ProfileRecord("matmul_kahan", "precision", m, n, kdim,
+        ProfileRecord("matmul_kahan", "kahan", "kahan", m, n, kdim, 0,
                       ProfileNowSeconds() - start, error);
         return error;
     }
@@ -295,7 +355,7 @@ MatrixError MatrixMultiplyKahan(const Matrix *A, const Matrix *B, Matrix *C)
         }
     }
 
-    ProfileRecord("matmul_kahan", "precision", m, n, kdim,
+    ProfileRecord("matmul_kahan", "kahan", "kahan", m, n, kdim, 0,
                   ProfileNowSeconds() - start, MATRIX_SUCCESS);
     return MATRIX_SUCCESS;
 }
@@ -309,29 +369,57 @@ MatrixError MatrixMultiplyAuto(const Matrix *A, const Matrix *B, Matrix *C)
     BackendType requested = BackendGetType();
     BackendType actual = BackendFallback(requested);
     MatrixError error;
+    int block_size;
+    const char *actual_backend_name;
+    const char *requested_backend_name = BackendName(requested);
 
     MultiplyDims(A, B, &m, &n, &kdim);
+    block_size = MatrixAutoChooseBlockSize(m, n, kdim);
     if (requested == BACKEND_NAIVE) {
         error = MatrixMultiplyNaive(A, B, C);
         actual = BACKEND_NAIVE;
+        block_size = 0;
     } else if (requested == BACKEND_IKJ) {
-        error = MatrixMultiply(A, B, C);
+        error = MatrixMultiplyIKJ(A, B, C);
         actual = BACKEND_IKJ;
-    } else if (requested == BACKEND_BLOCKED || actual == BACKEND_BLOCKED) {
-        if (m >= MATRIX_AUTO_BLOCK_THRESHOLD || n >= MATRIX_AUTO_BLOCK_THRESHOLD ||
-            kdim >= MATRIX_AUTO_BLOCK_THRESHOLD) {
-            error = MatrixMultiplyBlocked(A, B, C, MATRIX_AUTO_BLOCK_SIZE);
-            actual = BACKEND_BLOCKED;
-        } else {
-            error = MatrixMultiply(A, B, C);
+        block_size = 0;
+    } else if (requested == BACKEND_BLOCKED) {
+        error = MatrixMultiplyBlocked(A, B, C, block_size);
+        actual = BACKEND_BLOCKED;
+    } else if (requested == BACKEND_SIMD || requested == BACKEND_THREADS || requested == BACKEND_BLAS) {
+        actual_backend_name = MatrixAutoChooseBackendName(m, n, kdim);
+        if (strcmp(actual_backend_name, "ikj") == 0) {
+            error = MatrixMultiplyIKJ(A, B, C);
             actual = BACKEND_IKJ;
+            block_size = 0;
+        } else if (strcmp(actual_backend_name, "transposeB") == 0) {
+            error = MatrixMultiplyTransposeB(A, B, C);
+            ProfileRecord("matmul_auto", requested_backend_name, actual_backend_name,
+                          m, n, kdim, 0, ProfileNowSeconds() - start, error);
+            return error;
+        } else {
+            error = MatrixMultiplyBlocked(A, B, C, block_size);
+            actual = BACKEND_BLOCKED;
         }
     } else {
-        error = MatrixMultiply(A, B, C);
-        actual = BACKEND_IKJ;
+        actual_backend_name = MatrixAutoChooseBackendName(m, n, kdim);
+        if (strcmp(actual_backend_name, "ikj") == 0) {
+            error = MatrixMultiplyIKJ(A, B, C);
+            actual = BACKEND_IKJ;
+            block_size = 0;
+        } else if (strcmp(actual_backend_name, "transposeB") == 0) {
+            error = MatrixMultiplyTransposeB(A, B, C);
+            ProfileRecord("matmul_auto", requested_backend_name, actual_backend_name,
+                          m, n, kdim, 0, ProfileNowSeconds() - start, error);
+            return error;
+        } else {
+            error = MatrixMultiplyBlocked(A, B, C, block_size);
+            actual = BACKEND_BLOCKED;
+        }
     }
 
-    ProfileRecord("matmul_auto", BackendName(actual), m, n, kdim,
+    ProfileRecord("matmul_auto", requested_backend_name, BackendName(actual), m, n, kdim,
+                  block_size,
                   ProfileNowSeconds() - start, error);
     return error;
 }
@@ -344,22 +432,26 @@ MatrixError MatrixTransposeBlocked(const Matrix *A, Matrix *AT, int block_size)
 
     UnaryDims(A, &m, &n);
     if (!MatrixIsValid(A) || !MatrixIsValid(AT)) {
-        ProfileRecord("transpose_blocked", "pure_c", m, n, 0,
+        ProfileRecord("transpose_blocked", "transpose_blocked", "transpose_blocked", m, n, 0,
+                      block_size,
                       ProfileNowSeconds() - start, MATRIX_ERROR_NULL_POINTER);
         return MATRIX_ERROR_NULL_POINTER;
     }
     if (AT->row != A->column || AT->column != A->row) {
-        ProfileRecord("transpose_blocked", "pure_c", m, n, 0,
+        ProfileRecord("transpose_blocked", "transpose_blocked", "transpose_blocked", m, n, 0,
+                      block_size,
                       ProfileNowSeconds() - start, MATRIX_ERROR_SIZE_MISMATCH);
         return MATRIX_ERROR_SIZE_MISMATCH;
     }
     if (AT->data == A->data) {
-        ProfileRecord("transpose_blocked", "pure_c", m, n, 0,
+        ProfileRecord("transpose_blocked", "transpose_blocked", "transpose_blocked", m, n, 0,
+                      block_size,
                       ProfileNowSeconds() - start, MATRIX_ERROR_ALIASING);
         return MATRIX_ERROR_ALIASING;
     }
     if (block_size <= 0) {
-        ProfileRecord("transpose_blocked", "pure_c", m, n, 0,
+        ProfileRecord("transpose_blocked", "transpose_blocked", "transpose_blocked", m, n, 0,
+                      block_size,
                       ProfileNowSeconds() - start, MATRIX_ERROR_INVALID_ARGUMENT);
         return MATRIX_ERROR_INVALID_ARGUMENT;
     }
@@ -378,7 +470,8 @@ MatrixError MatrixTransposeBlocked(const Matrix *A, Matrix *AT, int block_size)
         }
     }
 
-    ProfileRecord("transpose_blocked", "pure_c", m, n, 0,
+    ProfileRecord("transpose_blocked", "transpose_blocked", "transpose_blocked", m, n, 0,
+                  block_size,
                   ProfileNowSeconds() - start, MATRIX_SUCCESS);
     return MATRIX_SUCCESS;
 }
@@ -392,7 +485,7 @@ MatrixError MatrixAddInPlace(Matrix *A, const Matrix *B)
 
     UnaryDims(A, &m, &n);
     if (error != MATRIX_SUCCESS) {
-        ProfileRecord("add_inplace", "pure_c", m, n, 0,
+        ProfileRecord("add_inplace", "add_inplace", "add_inplace", m, n, 0, 0,
                       ProfileNowSeconds() - start, error);
         return error;
     }
@@ -404,7 +497,7 @@ MatrixError MatrixAddInPlace(Matrix *A, const Matrix *B)
         a[i] += b[i];
     }
 
-    ProfileRecord("add_inplace", "pure_c", m, n, 0,
+    ProfileRecord("add_inplace", "add_inplace", "add_inplace", m, n, 0, 0,
                   ProfileNowSeconds() - start, MATRIX_SUCCESS);
     return MATRIX_SUCCESS;
 }
@@ -417,7 +510,7 @@ MatrixError MatrixScaleInPlace(Matrix *A, REAL alpha)
 
     UnaryDims(A, &m, &n);
     if (!MatrixIsValid(A)) {
-        ProfileRecord("scale_inplace", "pure_c", m, n, 0,
+        ProfileRecord("scale_inplace", "scale_inplace", "scale_inplace", m, n, 0, 0,
                       ProfileNowSeconds() - start, MATRIX_ERROR_NULL_POINTER);
         return MATRIX_ERROR_NULL_POINTER;
     }
@@ -428,7 +521,7 @@ MatrixError MatrixScaleInPlace(Matrix *A, REAL alpha)
         a[i] *= alpha;
     }
 
-    ProfileRecord("scale_inplace", "pure_c", m, n, 0,
+    ProfileRecord("scale_inplace", "scale_inplace", "scale_inplace", m, n, 0, 0,
                   ProfileNowSeconds() - start, MATRIX_SUCCESS);
     return MATRIX_SUCCESS;
 }
@@ -442,7 +535,7 @@ MatrixError MatrixAxpy(REAL alpha, const Matrix *X, Matrix *Y)
 
     UnaryDims(X, &m, &n);
     if (error != MATRIX_SUCCESS) {
-        ProfileRecord("axpy", "pure_c", m, n, 0,
+        ProfileRecord("axpy", "axpy", "axpy", m, n, 0, 0,
                       ProfileNowSeconds() - start, error);
         return error;
     }
@@ -454,7 +547,7 @@ MatrixError MatrixAxpy(REAL alpha, const Matrix *X, Matrix *Y)
         y[i] += alpha * x[i];
     }
 
-    ProfileRecord("axpy", "pure_c", m, n, 0,
+    ProfileRecord("axpy", "axpy", "axpy", m, n, 0, 0,
                   ProfileNowSeconds() - start, MATRIX_SUCCESS);
     return MATRIX_SUCCESS;
 }

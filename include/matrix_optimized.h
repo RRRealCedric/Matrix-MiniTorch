@@ -13,10 +13,12 @@
 
 typedef struct {
     const char *kernel_name;
+    const char *requested_backend_name;
     const char *backend_name;
     int m;
     int n;
     int k;
+    int block_size;
     double elapsed_seconds;
     MatrixError error;
 } MatrixProfileRecord;
