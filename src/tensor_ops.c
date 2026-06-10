@@ -88,13 +88,8 @@ MatrixError TensorMatmul(const Tensor *A, const Tensor *B, Tensor *C)
     C_view = MatrixViewFromTensor2D(C);
     backend = BackendGetType();
 
-    if (backend == BACKEND_IKJ) {
-        return MatrixMultiplyIKJ(&A_view, &B_view, &C_view);
-    }
-    if (backend == BACKEND_BLOCKED) {
-        return MatrixMultiplyBlocked(&A_view, &B_view, &C_view, TENSOR_BLOCK_SIZE);
-    }
-    return MatrixMultiply(&A_view, &B_view, &C_view);
+    (void)backend;
+    return MatrixMultiplyAuto(&A_view, &B_view, &C_view);
 }
 
 static void TensorAttachOp(Tensor *Out, TensorOp op, Tensor *Left, Tensor *Right)

@@ -1,4 +1,5 @@
-# 小型 C 语言矩阵计算库 Matrix 与 Mini-torch
+<<<<<<< HEAD
+# 小型 C 语言矩阵计算库 Matrix
 
 本目录是最终提交的完整工程文件包。工程以基础矩阵计算库为核心，完成课程要求的四项矩阵运算：矩阵加法、矩阵标量乘法、矩阵转置和矩阵乘法。在此基础上，工程进一步加入了矩阵乘法优化版本、简化 Tensor 抽象、后端分发机制和一个 mini autograd / MLP 演示，用于展示程序的可扩展性。
 
@@ -6,26 +7,41 @@
 
 ## 一、工程文件结构
 
-| 文件 | 作用 |
+整理后工程采用较标准的 C 项目目录组织：
+
+```text
+Matrix/
+├── include/      # 公开头文件
+├── src/          # 矩阵库、优化 kernel、Tensor、solver 等实现
+├── tests/        # 基础正确性测试入口
+├── examples/     # Tensor 与 MLP 演示程序
+├── benchmarks/   # 性能测试入口
+├── build/        # 编译中间文件，由 make 自动生成
+├── bin/          # 可执行文件，由 make 自动生成
+├── Makefile
+└── README.md
+```
+
+| 路径 | 作用 |
 | --- | --- |
-| `matrix.h` | 基础矩阵库头文件，定义 `Matrix`、`MatrixError` 和基础矩阵函数接口。 |
-| `matrix.c` | 基础矩阵库实现文件，实现矩阵创建、释放、访问、填充、打印和基础矩阵运算。 |
-| `matrix_optimized.h` | 优化矩阵乘法接口声明。 |
-| `matrix_optimized.c` | 优化矩阵乘法实现，包括 IKJ 循环顺序、分块乘法、转置 B 乘法和 Kahan 补偿求和乘法。 |
-| `matrix_lu.h` | LU 分解与三角方程求解接口声明。 |
-| `matrix_lu.c` | 实现无主元 LU 分解、前代、回代、LU 求解和行列式计算。 |
-| `matrix_solve.h` | 高斯消元线性方程组求解接口声明。 |
-| `matrix_solve.c` | 实现无主元高斯消元和带部分主元高斯消元。 |
-| `tensor.h` | 简化 Tensor 数据结构定义，包含 shape、stride、data、grad 和 autograd 元数据。 |
-| `tensor.c` | Tensor 创建、释放、填充、打印、梯度清零和 SGD 参数更新等基础功能。 |
-| `tensor_ops.h` | Tensor 运算接口声明，包括普通 Tensor 运算和 autograd 运算。 |
-| `tensor_ops.c` | Tensor 运算、后端分发、自动求导反向传播实现。 |
-| `backend.h` | 后端类型定义与后端选择接口。 |
-| `backend.c` | 后端选择逻辑实现，可在 naive、IKJ、blocked 三种矩阵乘法后端之间切换。 |
-| `main.c` | 基础矩阵库正确性测试主程序。 |
-| `demo_tensor.c` | mini PyTorch 风格 Tensor/Backend 演示程序。 |
-| `demo_mlp.c` | mini autograd 多层感知机训练演示程序。 |
-| `benchmark.c` | 性能测试程序，输出基础运算和不同矩阵乘法实现的平均运行时间。 |
+| `include/matrix.h` | 基础矩阵库头文件，定义 `Matrix`、`MatrixError` 和基础矩阵函数接口。 |
+| `src/matrix.c` | 基础矩阵库实现文件，实现矩阵创建、释放、访问、填充、打印和基础矩阵运算。 |
+| `include/matrix_optimized.h` | 优化矩阵乘法接口声明。 |
+| `src/matrix_optimized.c` | 可替换 kernel 层，包括 IKJ、分块、转置 B、Kahan、Auto 调度、分块转置、融合运算和 profiling。 |
+| `include/matrix_lu.h` | LU 分解与三角方程求解接口声明。 |
+| `src/matrix_lu.c` | 实现无主元 LU 分解、前代、回代、LU 求解和行列式计算。 |
+| `include/matrix_solve.h` | 高斯消元线性方程组求解接口声明。 |
+| `src/matrix_solve.c` | 实现无主元高斯消元和带部分主元高斯消元。 |
+| `include/tensor.h` | 简化 Tensor 数据结构定义，包含 shape、stride、data、grad 和 autograd 元数据。 |
+| `src/tensor.c` | Tensor 创建、释放、填充、打印、梯度清零和 SGD 参数更新等基础功能。 |
+| `include/tensor_ops.h` | Tensor 运算接口声明，包括普通 Tensor 运算和 autograd 运算。 |
+| `src/tensor_ops.c` | Tensor 运算、后端分发、自动求导反向传播实现。 |
+| `include/backend.h` | 后端类型定义与后端选择接口。 |
+| `src/backend.c` | 后端选择逻辑实现，可在 naive、IKJ、blocked 以及预留 SIMD、threads、BLAS 后端之间切换。 |
+| `tests/main.c` | 基础矩阵库正确性测试主程序。 |
+| `examples/demo_tensor.c` | mini PyTorch 风格 Tensor/Backend 演示程序。 |
+| `examples/demo_mlp.c` | mini autograd 多层感知机训练演示程序。 |
+| `benchmarks/benchmark.c` | 性能测试程序，输出基础运算和不同矩阵乘法实现的平均运行时间。 |
 | `Makefile` | 工程编译、运行、性能测试和清理命令。 |
 | `README.md` | 工程说明文档。 |
 
@@ -112,20 +128,79 @@ i * column + j
 - 元素总数使用 `size_t`，避免大矩阵元素数量超过 `int` 范围。
 - 热点循环中减少 `MatrixIndex()` 的重复调用，改用局部行偏移。
 - 逐元素运算中使用局部 `restrict` 指针，帮助编译器优化内存访问。
+- `MatrixFillZero` 和 `MatrixCopy` 分别使用 `memset`、`memcpy`，减少简单内存操作的循环开销。
+- `MatrixMultiply` 默认使用 cache 友好的 `i-k-j` 循环顺序，原始 `i-j-k` 版本保留为 `MatrixMultiplyNaive` 作为性能基线。
 - 对输出矩阵与输入矩阵的 alias 情况进行显式检查，避免隐藏错误。
 
-## 三、矩阵乘法优化版本
+## 三、底层 kernel 优化与 profiling
 
-矩阵乘法是本工程中计算量最大的操作。基础版本 `MatrixMultiply` 使用清晰的三重循环实现，便于理解算法逻辑。
+矩阵乘法是本工程中计算量最大的操作。为了兼顾课程可读性和性能对比，工程采用两层设计：
+
+- `matrix.c`：保留稳定的基础 `Matrix` API，例如 `MatrixAdd`、`MatrixScale`、`MatrixTranspose`、`MatrixMultiply`。
+- `matrix_optimized.c`：作为可替换 kernel 层，集中放置不同实现方式、profiling 和后端调度逻辑。
+
+当前默认入口 `MatrixMultiply` 已采用 `i-k-j` 循环顺序；原始 `i-j-k` 三重循环保留为 `MatrixMultiplyNaive`，用于报告中展示优化前后的性能差异。
 
 为了比较不同实现方式的效率和精度，工程额外提供多个优化版本：
 
+- `MatrixMultiplyNaive`：原始 `i-j-k` 实现，主要用于教学和性能基线。
 - `MatrixMultiplyIKJ`：将循环顺序调整为 `i-k-j`，使对 `B` 和 `C` 的访问更符合行主序连续存储特点。
 - `MatrixMultiplyBlocked`：使用分块计算，提高缓存局部性。
 - `MatrixMultiplyTransposeB`：先将 `B` 转置为 `BT`，再将 `A` 的行与 `BT` 的行做连续点积，减少内层循环中的跨行访问。
 - `MatrixMultiplyKahan`：在每个点积中使用 Kahan 补偿求和，减少大量浮点加法带来的舍入误差，主要用于精度对比。
+- `MatrixMultiplyAuto`：根据当前后端选择和矩阵规模选择合适的纯 C kernel；未启用的高级后端会自动回退。
+- `MatrixTransposeBlocked`：分块矩阵转置，减少大矩阵转置时的缓存不命中。
+- `MatrixAxpy`：融合 `Y = alpha * X + Y`，避免先标量乘法、再矩阵加法产生额外临时矩阵。
+- `MatrixAddInPlace`、`MatrixScaleInPlace`：原地加法和原地缩放，用于减少内存分配和数据拷贝。
 
 这些版本的数学结果应保持一致，但运行时间和数值误差可能不同。一般来说，IKJ、分块和转置 B 版本偏向速度优化，Kahan 版本偏向精度优化。可通过 `make benchmark` 进行性能比较。
+
+### 1. Profiling 支持
+
+优化 kernel 层提供轻量 profiling，默认关闭。开启后，每次 optimized kernel 调用会记录：
+
+- kernel 名称。
+- 实际后端名称。
+- 矩阵规模 `m/n/k`。
+- 运行时间，单位秒。
+- 返回状态。
+
+基本用法如下：
+
+```c
+MatrixProfileEnable(1);
+MatrixProfileClear();
+
+MatrixMultiplyAuto(&A, &B, &C);
+MatrixTransposeBlocked(&A, &AT, 32);
+MatrixAxpy(2.0, &A, &B);
+
+MatrixProfilePrint(stdout);
+MatrixProfileEnable(0);
+```
+
+也可以通过 `MatrixProfileGetRecords(&count)` 取得记录数组，便于后续写入日志或报告表格。profiling 内部使用固定容量数组，避免引入动态日志系统。
+
+### 2. 可选高性能后端
+
+后端类型已预留为：
+
+- `BACKEND_NAIVE`：朴素基线。
+- `BACKEND_IKJ`：纯 C IKJ。
+- `BACKEND_BLOCKED`：纯 C 分块。
+- `BACKEND_SIMD`：预留 SIMD 后端。
+- `BACKEND_THREADS`：预留多线程后端。
+- `BACKEND_BLAS`：预留平台 BLAS 后端。
+
+默认编译不依赖 SIMD、多线程或 BLAS，因此在 VS Code 和学院云平台中可以直接 `make`。如果后续要实验可选后端，可以通过宏打开入口，例如：
+
+```sh
+make USER_CPPFLAGS="-DMATRIX_ENABLE_SIMD"
+make USER_CPPFLAGS="-DMATRIX_ENABLE_THREADS"
+make USER_CPPFLAGS="-DMATRIX_ENABLE_BLAS"
+```
+
+当前阶段这些高级后端只完成接口与回退框架；如果选择了未真正实现或未启用的后端，`MatrixMultiplyAuto` 会回退到纯 C kernel，并在 profiling 中记录实际使用的后端。
 
 ## 四、mini Tensor / Backend 设计
 
@@ -158,9 +233,12 @@ i * column + j
 
 后端类型定义如下：
 
-- `BACKEND_NAIVE`：调用基础矩阵乘法。
-- `BACKEND_IKJ`：调用 IKJ 优化矩阵乘法。
-- `BACKEND_BLOCKED`：调用分块矩阵乘法。
+- `BACKEND_NAIVE`：调用朴素基线乘法。
+- `BACKEND_IKJ`：调用纯 C IKJ 优化矩阵乘法。
+- `BACKEND_BLOCKED`：调用纯 C 分块矩阵乘法。
+- `BACKEND_SIMD`：预留 SIMD 后端。
+- `BACKEND_THREADS`：预留多线程后端。
+- `BACKEND_BLAS`：预留平台 BLAS 后端。
 
 用户可通过：
 
@@ -169,6 +247,8 @@ BackendSetType(BACKEND_IKJ);
 ```
 
 选择后端。随后调用 `TensorMatmul` 或 `TensorMatmulAuto` 时，会根据当前后端自动选择底层矩阵乘法 kernel。
+
+如果选择了当前编译环境未启用的高级后端，后端分发会自动回退到纯 C kernel。这样既能展示工程扩展性，又不会影响课程环境中的默认编译。
 
 ## 五、mini Autograd 与 MLP 演示
 
@@ -223,9 +303,11 @@ make
 
 该命令会编译：
 
-- `matrix_demo`
-- `tensor_demo`
-- `mlp_demo`
+- `bin/matrix_demo`
+- `bin/tensor_demo`
+- `bin/mlp_demo`
+
+所有 `.o` 中间文件会放入 `build/obj/`，可执行文件会放入 `bin/`。这两个目录由 `make` 自动创建，不需要手动创建。
 
 ### 2. 运行基础矩阵库测试
 
@@ -323,4 +405,6 @@ make clean
 - 本项目不依赖第三方库，只使用 C 标准库和数学库 `-lm`。
 - 大矩阵性能测试可能耗时较长，建议在报告取数时单独运行 `make benchmark`。
 - Tensor/autograd 部分是教学演示性质的简化实现，不等同于完整 PyTorch，但体现了 Tensor、后端分发、计算图和反向传播的基本思想。
-
+=======
+# Matrix-MiniTorch
+>>>>>>> 9092cd2b7298a82e63a672e2fad1650db0dbc285

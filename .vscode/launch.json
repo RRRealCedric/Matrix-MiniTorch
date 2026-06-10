@@ -7,7 +7,7 @@
       "request": "launch",
       "args": [],
       "cwd": "/Users/cedric/Desktop/csapp/code/Matrix",
-      "program": "/Users/cedric/Desktop/csapp/code/Matrix/build/Debug/outDebug"
+      "program": "/Users/cedric/Desktop/csapp/code/Matrix/bin/matrix_demo"
     }
   ]
 }

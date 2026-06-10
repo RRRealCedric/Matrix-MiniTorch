@@ -235,7 +235,7 @@ static int TestExtraMatrixOps(void)
 
 static int TestOptimizedMultiply(void)
 {
-    Matrix A, B, C0, C1, C2, C3, C4;
+    Matrix A, B, C0, C1, C2, C3, C4, C5;
     int pass;
 
     MatrixInit(&A);
@@ -245,6 +245,7 @@ static int TestOptimizedMultiply(void)
     MatrixInit(&C2);
     MatrixInit(&C3);
     MatrixInit(&C4);
+    MatrixInit(&C5);
 
     Require(MatrixCreate(&A, 4, 4), "MatrixCreate(A)");
     Require(MatrixCreate(&B, 4, 4), "MatrixCreate(B)");
@@ -253,22 +254,26 @@ static int TestOptimizedMultiply(void)
     Require(MatrixCreate(&C2, 4, 4), "MatrixCreate(C2)");
     Require(MatrixCreate(&C3, 4, 4), "MatrixCreate(C3)");
     Require(MatrixCreate(&C4, 4, 4), "MatrixCreate(C4)");
+    Require(MatrixCreate(&C5, 4, 4), "MatrixCreate(C5)");
 
     MatrixFillSequence(&A, 1.0, 0.25);
     MatrixFillSequence(&B, 2.0, 0.5);
 
     printf("\n[6] Optimized multiplication kernels\n");
-    MatrixMultiply(&A, &B, &C0);
+    MatrixMultiplyNaive(&A, &B, &C0);
+    MatrixMultiply(&A, &B, &C1);
     MatrixMultiplyIKJ(&A, &B, &C1);
     MatrixMultiplyBlocked(&A, &B, &C2, 2);
     MatrixMultiplyTransposeB(&A, &B, &C3);
     MatrixMultiplyKahan(&A, &B, &C4);
+    MatrixMultiplyAuto(&A, &B, &C5);
 
     pass = MatrixAlmostEqual(&C0, &C1, EPSILON) &&
            MatrixAlmostEqual(&C0, &C2, EPSILON) &&
            MatrixAlmostEqual(&C0, &C3, EPSILON) &&
-           MatrixAlmostEqual(&C0, &C4, EPSILON);
-    PrintPassFail("optimized kernels equal to naive", pass);
+           MatrixAlmostEqual(&C0, &C4, EPSILON) &&
+           MatrixAlmostEqual(&C0, &C5, EPSILON);
+    PrintPassFail("optimized kernels equal to naive baseline", pass);
 
     MatrixFree(&A);
     MatrixFree(&B);
@@ -277,6 +282,77 @@ static int TestOptimizedMultiply(void)
     MatrixFree(&C2);
     MatrixFree(&C3);
     MatrixFree(&C4);
+    MatrixFree(&C5);
+    return pass;
+}
+
+static int TestOptimizedUtilities(void)
+{
+    Matrix A, B, AT0, AT1, ScaleTmp, AddTmp;
+    size_t profile_count = 0;
+    int pass = 1;
+
+    MatrixInit(&A);
+    MatrixInit(&B);
+    MatrixInit(&AT0);
+    MatrixInit(&AT1);
+    MatrixInit(&ScaleTmp);
+    MatrixInit(&AddTmp);
+
+    Require(MatrixCreate(&A, 3, 4), "MatrixCreate(A)");
+    Require(MatrixCreate(&B, 3, 4), "MatrixCreate(B)");
+    Require(MatrixCreate(&AT0, 4, 3), "MatrixCreate(AT0)");
+    Require(MatrixCreate(&AT1, 4, 3), "MatrixCreate(AT1)");
+    Require(MatrixCreate(&ScaleTmp, 3, 4), "MatrixCreate(ScaleTmp)");
+    Require(MatrixCreate(&AddTmp, 3, 4), "MatrixCreate(AddTmp)");
+
+    MatrixFillSequence(&A, 1.0, 1.0);
+    MatrixFillSequence(&B, 10.0, 2.0);
+
+    printf("\n[7] Optimized utilities and profiling\n");
+
+    MatrixTranspose(&A, &AT0);
+    pass = pass && MatrixTransposeBlocked(&A, &AT1, 2) == MATRIX_SUCCESS;
+    pass = pass && MatrixAlmostEqual(&AT0, &AT1, EPSILON);
+    PrintPassFail("blocked transpose equals normal transpose", pass);
+
+    MatrixScale(3.0, &A, &ScaleTmp);
+    MatrixAdd(&B, &ScaleTmp, &AddTmp);
+    pass = pass && MatrixAxpy(3.0, &A, &B) == MATRIX_SUCCESS;
+    pass = pass && MatrixAlmostEqual(&B, &AddTmp, EPSILON);
+    PrintPassFail("AXPY equals scale plus add", pass);
+
+    pass = pass && MatrixScaleInPlace(&A, 0.5) == MATRIX_SUCCESS;
+    pass = pass && MatrixAddInPlace(&A, &A) == MATRIX_ERROR_ALIASING;
+    pass = pass && MatrixTransposeBlocked(&A, &AT1, 0) == MATRIX_ERROR_INVALID_ARGUMENT;
+    PrintPassFail("optimized utility error handling", pass);
+
+    MatrixProfileEnable(0);
+    MatrixProfileClear();
+    MatrixMultiplyIKJ(&A, &AT0, &ScaleTmp);
+    MatrixProfileGetRecords(&profile_count);
+    pass = pass && profile_count == 0;
+    PrintPassFail("profiling disabled records nothing", pass);
+
+    MatrixProfileEnable(1);
+    MatrixProfileClear();
+    MatrixMultiplyAuto(&A, &AT0, &ScaleTmp);
+    MatrixProfileGetRecords(&profile_count);
+    pass = pass && profile_count > 0;
+    PrintPassFail("profiling records enabled kernels", pass);
+
+    MatrixProfileClear();
+    MatrixProfileGetRecords(&profile_count);
+    pass = pass && profile_count == 0;
+    PrintPassFail("profiling clear removes records", pass);
+    MatrixProfileEnable(0);
+
+    MatrixFree(&A);
+    MatrixFree(&B);
+    MatrixFree(&AT0);
+    MatrixFree(&AT1);
+    MatrixFree(&ScaleTmp);
+    MatrixFree(&AddTmp);
     return pass;
 }
 
@@ -296,7 +372,7 @@ static int TestErrorHandling(void)
     Require(MatrixCreate(&C, 2, 2), "MatrixCreate(C)");
     Require(MatrixCreate(&AT, 2, 3), "MatrixCreate(AT)");
 
-    printf("\n[7] Error handling\n");
+    printf("\n[8] Error handling\n");
 
     pass = pass && MatrixAdd(&A, &B, &C) == MATRIX_ERROR_SIZE_MISMATCH;
     PrintPassFail("addition size mismatch", pass);
@@ -357,7 +433,7 @@ static int TestLUAndSolvers(void)
         b.data[i] = lu_b[i];
     }
 
-    printf("\n[8] LU decomposition and linear solvers\n");
+    printf("\n[9] LU decomposition and linear solvers\n");
     pass = pass && LUDecomposeNoPivot(&A, &L, &U, 1e-12) == MATRIX_SUCCESS;
     pass = pass && MatrixMultiply(&L, &U, &LU) == MATRIX_SUCCESS;
     pass = pass && MatrixAlmostEqual(&A, &LU, EPSILON);
@@ -411,6 +487,7 @@ int main(void)
     pass = TestMatrixMultiply() && pass;
     pass = TestExtraMatrixOps() && pass;
     pass = TestOptimizedMultiply() && pass;
+    pass = TestOptimizedUtilities() && pass;
     pass = TestErrorHandling() && pass;
     pass = TestLUAndSolvers() && pass;
 

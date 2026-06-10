@@ -49,6 +49,7 @@ MatrixError MatrixSub(const Matrix *A, const Matrix *B, Matrix *C);
 MatrixError MatrixScale(REAL alpha, const Matrix *A, Matrix *B);
 MatrixError MatrixHadamard(const Matrix *A, const Matrix *B, Matrix *C);
 MatrixError MatrixTranspose(const Matrix *A, Matrix *AT);
+MatrixError MatrixMultiplyNaive(const Matrix *A, const Matrix *B, Matrix *C);
 MatrixError MatrixMultiply(const Matrix *A, const Matrix *B, Matrix *C);
 MatrixError MatrixNormFrobenius(const Matrix *A, REAL *norm_value);
 int MatrixAlmostEqual(const Matrix *A, const Matrix *B, REAL tolerance);

@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 void MatrixInit(Matrix *A)
 {
@@ -108,9 +109,7 @@ MatrixError MatrixFillZero(Matrix *A)
     }
 
     total = (size_t)A->row * (size_t)A->column;
-    for (size_t k = 0; k < total; ++k) {
-        A->data[k] = 0.0;
-    }
+    memset(A->data, 0, total * sizeof(REAL));
     return MATRIX_SUCCESS;
 }
 
@@ -177,9 +176,7 @@ MatrixError MatrixCopy(const Matrix *src, Matrix *dst)
     }
 
     total = (size_t)src->row * (size_t)src->column;
-    for (size_t k = 0; k < total; ++k) {
-        dst->data[k] = src->data[k];
-    }
+    memcpy(dst->data, src->data, total * sizeof(REAL));
     return MATRIX_SUCCESS;
 }
 
@@ -249,6 +246,20 @@ static MatrixError CheckSameShape(const Matrix *A, const Matrix *B, Matrix *C)
         return MATRIX_ERROR_SIZE_MISMATCH;
     }
     if (C->row != A->row || C->column != A->column) {
+        return MATRIX_ERROR_SIZE_MISMATCH;
+    }
+    if (MatrixDataAliases(C, A) || MatrixDataAliases(C, B)) {
+        return MATRIX_ERROR_ALIASING;
+    }
+    return MATRIX_SUCCESS;
+}
+
+static MatrixError CheckMultiplyShape(const Matrix *A, const Matrix *B, Matrix *C)
+{
+    if (!MatrixIsValid(A) || !MatrixIsValid(B) || !MatrixIsValid(C)) {
+        return MATRIX_ERROR_NULL_POINTER;
+    }
+    if (A->column != B->row || C->row != A->row || C->column != B->column) {
         return MATRIX_ERROR_SIZE_MISMATCH;
     }
     if (MatrixDataAliases(C, A) || MatrixDataAliases(C, B)) {
@@ -396,16 +407,12 @@ int MatrixAlmostEqual(const Matrix *A, const Matrix *B, REAL tolerance)
     return 1;
 }
 
-MatrixError MatrixMultiply(const Matrix *A, const Matrix *B, Matrix *C)
+MatrixError MatrixMultiplyNaive(const Matrix *A, const Matrix *B, Matrix *C)
 {
-    if (!MatrixIsValid(A) || !MatrixIsValid(B) || !MatrixIsValid(C)) {
-        return MATRIX_ERROR_NULL_POINTER;
-    }
-    if (A->column != B->row || C->row != A->row || C->column != B->column) {
-        return MATRIX_ERROR_SIZE_MISMATCH;
-    }
-    if (MatrixDataAliases(C, A) || MatrixDataAliases(C, B)) {
-        return MATRIX_ERROR_ALIASING;
+    MatrixError error = CheckMultiplyShape(A, B, C);
+
+    if (error != MATRIX_SUCCESS) {
+        return error;
     }
 
     for (int i = 0; i < A->row; ++i) {
@@ -418,6 +425,29 @@ MatrixError MatrixMultiply(const Matrix *A, const Matrix *B, Matrix *C)
                        B->data[(size_t)k * (size_t)B->column + (size_t)j];
             }
             C->data[c_row + (size_t)j] = sum;
+        }
+    }
+    return MATRIX_SUCCESS;
+}
+
+MatrixError MatrixMultiply(const Matrix *A, const Matrix *B, Matrix *C)
+{
+    MatrixError error = CheckMultiplyShape(A, B, C);
+
+    if (error != MATRIX_SUCCESS) {
+        return error;
+    }
+
+    MatrixFillZero(C);
+    for (int i = 0; i < A->row; ++i) {
+        size_t a_row = (size_t)i * (size_t)A->column;
+        size_t c_row = (size_t)i * (size_t)C->column;
+        for (int k = 0; k < A->column; ++k) {
+            REAL aik = A->data[a_row + (size_t)k];
+            size_t b_row = (size_t)k * (size_t)B->column;
+            for (int j = 0; j < B->column; ++j) {
+                C->data[c_row + (size_t)j] += aik * B->data[b_row + (size_t)j];
+            }
         }
     }
     return MATRIX_SUCCESS;

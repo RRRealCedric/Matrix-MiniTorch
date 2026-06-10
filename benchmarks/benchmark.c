@@ -114,7 +114,45 @@ static double TimeTranspose(int n)
     return elapsed;
 }
 
+static double TimeTransposeBlocked(int n)
+{
+    Matrix A, B, C, AT;
+    double start;
+    double elapsed;
+
+    if (!CreateBenchmarkMatrices(n, &A, &B, &C, &AT)) {
+        return -1.0;
+    }
+    start = NowSeconds();
+    MatrixTransposeBlocked(&A, &AT, BLOCK_SIZE);
+    elapsed = NowSeconds() - start;
+    MatrixFree(&A);
+    MatrixFree(&B);
+    MatrixFree(&C);
+    MatrixFree(&AT);
+    return elapsed;
+}
+
 static double TimeMultiplyNaive(int n)
+{
+    Matrix A, B, C, AT;
+    double start;
+    double elapsed;
+
+    if (!CreateBenchmarkMatrices(n, &A, &B, &C, &AT)) {
+        return -1.0;
+    }
+    start = NowSeconds();
+    MatrixMultiplyNaive(&A, &B, &C);
+    elapsed = NowSeconds() - start;
+    MatrixFree(&A);
+    MatrixFree(&B);
+    MatrixFree(&C);
+    MatrixFree(&AT);
+    return elapsed;
+}
+
+static double TimeMultiplyDefault(int n)
 {
     Matrix A, B, C, AT;
     double start;
@@ -209,6 +247,27 @@ static double TimeMultiplyKahan(int n)
     return elapsed;
 }
 
+static double TimeMultiplyAuto(int n)
+{
+    Matrix A, B, C, AT;
+    double start;
+    double elapsed;
+
+    if (!CreateBenchmarkMatrices(n, &A, &B, &C, &AT)) {
+        return -1.0;
+    }
+    BackendSetType(BACKEND_BLOCKED);
+    start = NowSeconds();
+    MatrixMultiplyAuto(&A, &B, &C);
+    elapsed = NowSeconds() - start;
+    BackendSetType(BACKEND_NAIVE);
+    MatrixFree(&A);
+    MatrixFree(&B);
+    MatrixFree(&C);
+    MatrixFree(&AT);
+    return elapsed;
+}
+
 static double TimeTensorMatmulBlocked(int n)
 {
     Tensor A, B, C;
@@ -243,6 +302,45 @@ static double TimeTensorMatmulBlocked(int n)
     return elapsed;
 }
 
+static double TimeScaleThenAdd(int n)
+{
+    Matrix A, B, C, AT;
+    double start;
+    double elapsed;
+
+    if (!CreateBenchmarkMatrices(n, &A, &B, &C, &AT)) {
+        return -1.0;
+    }
+    start = NowSeconds();
+    MatrixScale(2.0, &A, &C);
+    MatrixAdd(&B, &C, &AT);
+    elapsed = NowSeconds() - start;
+    MatrixFree(&A);
+    MatrixFree(&B);
+    MatrixFree(&C);
+    MatrixFree(&AT);
+    return elapsed;
+}
+
+static double TimeAxpy(int n)
+{
+    Matrix A, B, C, AT;
+    double start;
+    double elapsed;
+
+    if (!CreateBenchmarkMatrices(n, &A, &B, &C, &AT)) {
+        return -1.0;
+    }
+    start = NowSeconds();
+    MatrixAxpy(2.0, &A, &B);
+    elapsed = NowSeconds() - start;
+    MatrixFree(&A);
+    MatrixFree(&B);
+    MatrixFree(&C);
+    MatrixFree(&AT);
+    return elapsed;
+}
+
 static double AverageTime(double (*func)(int), int n)
 {
     double total = 0.0;
@@ -257,6 +355,36 @@ static double AverageTime(double (*func)(int), int n)
     return total / (double)BENCHMARK_REPEAT;
 }
 
+static void RunProfileDemo(int n)
+{
+    Matrix A, B, C, AT;
+
+    if (!CreateBenchmarkMatrices(n, &A, &B, &C, &AT)) {
+        printf("\nProfiling demo skipped: cannot allocate matrices.\n");
+        return;
+    }
+
+    MatrixProfileEnable(1);
+    MatrixProfileClear();
+    BackendSetType(BACKEND_BLOCKED);
+    MatrixMultiplyAuto(&A, &B, &C);
+    MatrixTransposeBlocked(&A, &AT, BLOCK_SIZE);
+    MatrixAxpy(2.0, &A, &B);
+    BackendSetType(BACKEND_SIMD);
+    MatrixMultiplyAuto(&A, &B, &C);
+    BackendSetType(BACKEND_NAIVE);
+
+    printf("\nProfiling records, demo size = %d\n", n);
+    MatrixProfilePrint(stdout);
+    MatrixProfileEnable(0);
+    MatrixProfileClear();
+
+    MatrixFree(&A);
+    MatrixFree(&B);
+    MatrixFree(&C);
+    MatrixFree(&AT);
+}
+
 int main(void)
 {
     int sizes[] = {BENCHMARK_SIZE_1, BENCHMARK_SIZE_2, BENCHMARK_SIZE_3};
@@ -267,30 +395,47 @@ int main(void)
     printf("All times are average CPU seconds measured by clock().\n\n");
 
     printf("Basic operations\n");
-    printf("%-12s %-14s %-14s %-14s\n", "size", "add", "scale", "transpose");
+    printf("%-12s %-14s %-14s %-14s %-18s\n",
+           "size", "add", "scale", "transpose", "transpose_block");
     for (int i = 0; i < count; ++i) {
         int n = sizes[i];
-        printf("%-12d %-14.6f %-14.6f %-14.6f\n",
+        printf("%-12d %-14.6f %-14.6f %-14.6f %-18.6f\n",
                n,
                AverageTime(TimeAdd, n),
                AverageTime(TimeScale, n),
-               AverageTime(TimeTranspose, n));
+               AverageTime(TimeTranspose, n),
+               AverageTime(TimeTransposeBlocked, n));
     }
 
     printf("\nMatrix multiplication kernels\n");
-    printf("%-12s %-14s %-14s %-14s %-14s %-14s %-18s\n",
-           "size", "naive", "ikj", "blocked", "transposeB", "kahan", "tensor_blocked");
+    printf("%-12s %-14s %-14s %-14s %-14s %-14s %-14s %-14s %-18s\n",
+           "size", "naive", "default", "ikj", "blocked", "transposeB",
+           "kahan", "auto", "tensor_blocked");
     for (int i = 0; i < count; ++i) {
         int n = sizes[i];
-        printf("%-12d %-14.6f %-14.6f %-14.6f %-14.6f %-14.6f %-18.6f\n",
+        printf("%-12d %-14.6f %-14.6f %-14.6f %-14.6f %-14.6f %-14.6f %-14.6f %-18.6f\n",
                n,
                AverageTime(TimeMultiplyNaive, n),
+               AverageTime(TimeMultiplyDefault, n),
                AverageTime(TimeMultiplyIKJ, n),
                AverageTime(TimeMultiplyBlocked, n),
                AverageTime(TimeMultiplyTransposeB, n),
                AverageTime(TimeMultiplyKahan, n),
+               AverageTime(TimeMultiplyAuto, n),
                AverageTime(TimeTensorMatmulBlocked, n));
     }
+
+    printf("\nFused operations\n");
+    printf("%-12s %-18s %-14s\n", "size", "scale_then_add", "axpy");
+    for (int i = 0; i < count; ++i) {
+        int n = sizes[i];
+        printf("%-12d %-18.6f %-14.6f\n",
+               n,
+               AverageTime(TimeScaleThenAdd, n),
+               AverageTime(TimeAxpy, n));
+    }
+
+    RunProfileDemo(sizes[0]);
 
     return 0;
 }
