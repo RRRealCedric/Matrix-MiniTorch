@@ -24,9 +24,6 @@
 4. **演示层：Autograd / MLP / Digits Demo**
    展示如何在矩阵运算和 Tensor 抽象基础上，搭建一个非常简化的神经网络训练流程。
 
-如果把这个项目看作一个“小型课程工程”，那么它的主线是：
-
-`Matrix -> Optimized Matrix Kernels -> Tensor -> Autograd -> Mini MLP Demo`
 
 ## 2. 工程结构
 
@@ -148,11 +145,6 @@ i * column + j
 - 非方阵参与 LU/求解
 - 主元过小或矩阵接近奇异
 
-这种设计的意义是：
-
-- 每个函数的失败方式明确
-- 测试代码容易覆盖
-- 对课程工程和汇报来说，可读性和可解释性都很好
 
 ### 3.3 Tensor
 
@@ -425,14 +417,14 @@ CSV 和控制台摘要中包含：
 - `max_abs_error_vs_kahan`：与 `Kahan` 结果相比的最大绝对误差
 - `rel_fro_error_vs_kahan`：与 `Kahan` 结果相比的相对 Frobenius 误差
 
-### 8.4 为什么以 Kahan 作为精度参考
+### 8.4 以 Kahan 作为精度参考的原因
 
 `Kahan` 版本不是为了性能，而是为了降低浮点累加过程中的数值误差。因此在 benchmark 中：
 
 - `naive` 是速度基线
 - `kahan` 是精度参考
 
-这种设计使得实验更完整：我们不仅比较快慢，也比较“快了之后数值结果是否还稳定”。
+这种设计使得实验比较速度与数值结果稳定的trade-off。
 
 ## 9. 测试覆盖说明
 
@@ -544,32 +536,3 @@ make clean
 - `bin/`
 - `artifacts/`
 
-## 11. 建议的阅读顺序
-
-如果第一次接触这个项目，建议按下面顺序阅读：
-
-1. `include/matrix.h` / `src/matrix.c`
-   先理解基础矩阵结构和基础运算。
-2. `include/matrix_optimized.h` / `src/matrix_optimized.c`
-   再看优化 kernel 和 auto 调度。
-3. `tests/main.c`
-   通过测试了解项目到底验证了哪些行为。
-4. `benchmarks/benchmark.c`
-   理解实验设计、指标和性能对比方法。
-5. `include/tensor.h` / `src/tensor.c` / `src/tensor_ops.c`
-   理解 Tensor 和 autograd 的简化实现。
-6. `examples/demo_mlp.c`
-   看最小可训练网络如何搭建。
-7. `examples/demo_digits.c`
-   看如何接入更接近真实任务的数据集输入。
-
-## 12. 项目总结
-
-`Matrix-MiniTorch` 的价值不在于“功能很多”本身，而在于它把一个典型的计算系统拆成了清晰的层次，并且每一层都能被读懂、被测试、被 benchmark：
-
-- 底层有完整矩阵库
-- 中层有可比较的优化 kernel
-- 上层有 Tensor 和 autograd
-- 最终有可运行的 demo 和可导出的实验结果
-
-因此，它既可以被看作一个小型线性代数库，也可以被看作一个“从数值计算到简化神经网络”的教学型系统工程。
