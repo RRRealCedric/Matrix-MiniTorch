@@ -25,7 +25,7 @@ void TensorInit(Tensor *T)
 
 int TensorIsValid(const Tensor *T)
 {
-    return T != NULL && T->ndim > 0 && T->size > 0 && T->data != NULL && T->grad != NULL;
+    return T != NULL && T->ndim > 0 && T->size > 0 && T->data != NULL;
 }
 
 static MatrixError TensorComputeSizeAndStride(Tensor *T, int ndim, const int *shape)
@@ -88,12 +88,6 @@ MatrixError TensorCreate(Tensor *T, int ndim, const int *shape)
         TensorInit(T);
         return MATRIX_ERROR_ALLOC_FAILED;
     }
-    T->grad = (REAL *)calloc((size_t)T->size, sizeof(REAL));
-    if (T->grad == NULL) {
-        free(T->data);
-        TensorInit(T);
-        return MATRIX_ERROR_ALLOC_FAILED;
-    }
     return MATRIX_SUCCESS;
 }
 
@@ -125,12 +119,34 @@ void TensorSetRequiresGrad(Tensor *T, int requires_grad)
         return;
     }
     T->requires_grad = requires_grad ? 1 : 0;
+    if (T->requires_grad) {
+        (void)TensorEnsureGrad(T);
+    }
+}
+
+MatrixError TensorEnsureGrad(Tensor *T)
+{
+    if (!TensorIsValid(T)) {
+        return MATRIX_ERROR_NULL_POINTER;
+    }
+    if (T->grad != NULL) {
+        return MATRIX_SUCCESS;
+    }
+
+    T->grad = (REAL *)calloc((size_t)T->size, sizeof(REAL));
+    if (T->grad == NULL) {
+        return MATRIX_ERROR_ALLOC_FAILED;
+    }
+    return MATRIX_SUCCESS;
 }
 
 MatrixError TensorZeroGrad(Tensor *T)
 {
     if (!TensorIsValid(T)) {
         return MATRIX_ERROR_NULL_POINTER;
+    }
+    if (T->grad == NULL) {
+        return MATRIX_SUCCESS;
     }
     for (int i = 0; i < T->size; ++i) {
         T->grad[i] = 0.0;
@@ -148,6 +164,9 @@ MatrixError TensorSGDStep(Tensor *T, REAL learning_rate)
     }
     if (!T->requires_grad) {
         return MATRIX_SUCCESS;
+    }
+    if (T->grad == NULL) {
+        return MATRIX_ERROR_NULL_POINTER;
     }
 
     for (int i = 0; i < T->size; ++i) {
@@ -255,7 +274,7 @@ void TensorPrintGrad(const Tensor *T, const char *name)
     if (name == NULL) {
         name = "Tensor.grad";
     }
-    if (!TensorIsValid(T)) {
+    if (!TensorIsValid(T) || T->grad == NULL) {
         printf("%s is an empty or invalid tensor gradient.\n", name);
         return;
     }

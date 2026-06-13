@@ -1,17 +1,17 @@
-将 digits demo 所需的本地 CSV 数据放在这里。
+`data/` is the local dataset directory used by `digits_demo`.
 
-默认文件名：
+Expected default filenames:
 
-- `mnist_train_small.csv`
-- `mnist_test_small.csv`
+- `mnist_train.csv`
+- `mnist_test.csv`
 
-格式要求：
+Expected CSV format:
 
-- 每行一个样本
-- 第 1 列是标签 `0-9`
-- 后 784 列是像素值 `0-255`
+- one sample per line
+- first column: label `0-9`
+- next 784 columns: grayscale pixels `0-255`
 
-示例结构：
+Example:
 
 ```text
 label,pixel0,pixel1,...,pixel783
@@ -19,4 +19,14 @@ label,pixel0,pixel1,...,pixel783
 0,0,0,0,...,0
 ```
 
-当前仓库默认不提交真实数据文件，只约定读取格式与路径。
+Recommended workflow for this repository:
+
+1. Keep the Hugging Face download inside `mnist_hf/`
+2. Convert parquet files to CSV locally
+3. Run `make run-digits`
+
+Notes:
+
+- Full MNIST CSV files are generated artifacts and can be large.
+- The repository ignores `data/mnist_train.csv` and `data/mnist_test.csv` by default.
+- The source `mnist_hf/` parquet files are much more suitable for versioning than full CSV exports.

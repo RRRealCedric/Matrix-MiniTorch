@@ -8,3 +8,7 @@ venv/
 .vscode/
 build/
 bin/
+artifacts/digits/
+data/mnist_train.csv
+data/mnist_test.csv
+mnist_hf/

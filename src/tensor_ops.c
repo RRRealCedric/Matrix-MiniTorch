@@ -30,6 +30,16 @@ static Matrix MatrixViewFromTensor2D(const Tensor *T)
     return view;
 }
 
+static Matrix MatrixGradViewFromTensor2D(Tensor *T)
+{
+    Matrix view;
+
+    view.row = T->shape[0];
+    view.column = T->shape[1];
+    view.data = T->grad;
+    return view;
+}
+
 MatrixError TensorAdd(const Tensor *A, const Tensor *B, Tensor *C)
 {
     MatrixError error = CheckSameShape(A, B, C);
@@ -99,6 +109,9 @@ static void TensorAttachOp(Tensor *Out, TensorOp op, Tensor *Left, Tensor *Right
     Out->right = Right;
     Out->requires_grad = ((Left != NULL && Left->requires_grad) ||
                           (Right != NULL && Right->requires_grad));
+    if (Out->requires_grad) {
+        (void)TensorEnsureGrad(Out);
+    }
     TensorZeroGrad(Out);
 }
 
@@ -271,39 +284,79 @@ static void BackwardMSE(Tensor *T)
     }
 }
 
-static void BackwardMatmul(Tensor *T)
+static MatrixError BackwardMatmul(Tensor *T)
 {
     Tensor *A = T->left;
     Tensor *B = T->right;
-    int m = A->shape[0];
-    int n = A->shape[1];
-    int p = B->shape[1];
+    Matrix A_view = MatrixViewFromTensor2D(A);
+    Matrix B_view = MatrixViewFromTensor2D(B);
+    Matrix T_grad_view = MatrixGradViewFromTensor2D(T);
+    Matrix A_grad_view = MatrixGradViewFromTensor2D(A);
+    Matrix B_grad_view = MatrixGradViewFromTensor2D(B);
+    Matrix AT;
+    Matrix BT;
+    Matrix temp;
+    MatrixError error = MATRIX_SUCCESS;
+
+    MatrixInit(&AT);
+    MatrixInit(&BT);
+    MatrixInit(&temp);
 
     if (A->requires_grad) {
-        for (int i = 0; i < m; ++i) {
-            for (int k = 0; k < n; ++k) {
-                REAL sum = 0.0;
-                for (int j = 0; j < p; ++j) {
-                    sum += T->grad[i * T->stride[0] + j] *
-                           B->data[k * B->stride[0] + j];
-                }
-                A->grad[i * A->stride[0] + k] += sum;
-            }
+        error = MatrixCreate(&BT, B->shape[1], B->shape[0]);
+        if (error != MATRIX_SUCCESS) {
+            goto cleanup;
         }
+        error = MatrixTranspose(&B_view, &BT);
+        if (error != MATRIX_SUCCESS) {
+            goto cleanup;
+        }
+        error = MatrixCreate(&temp, A->shape[0], A->shape[1]);
+        if (error != MATRIX_SUCCESS) {
+            goto cleanup;
+        }
+        error = MatrixMultiplyAuto(&T_grad_view, &BT, &temp);
+        if (error != MATRIX_SUCCESS) {
+            goto cleanup;
+        }
+        error = MatrixAddInPlace(&A_grad_view, &temp);
+        if (error != MATRIX_SUCCESS) {
+            goto cleanup;
+        }
+        MatrixFree(&BT);
+        MatrixInit(&BT);
+        MatrixFree(&temp);
+        MatrixInit(&temp);
     }
 
     if (B->requires_grad) {
-        for (int k = 0; k < n; ++k) {
-            for (int j = 0; j < p; ++j) {
-                REAL sum = 0.0;
-                for (int i = 0; i < m; ++i) {
-                    sum += A->data[i * A->stride[0] + k] *
-                           T->grad[i * T->stride[0] + j];
-                }
-                B->grad[k * B->stride[0] + j] += sum;
-            }
+        error = MatrixCreate(&AT, A->shape[1], A->shape[0]);
+        if (error != MATRIX_SUCCESS) {
+            goto cleanup;
+        }
+        error = MatrixTranspose(&A_view, &AT);
+        if (error != MATRIX_SUCCESS) {
+            goto cleanup;
+        }
+        error = MatrixCreate(&temp, B->shape[0], B->shape[1]);
+        if (error != MATRIX_SUCCESS) {
+            goto cleanup;
+        }
+        error = MatrixMultiplyAuto(&AT, &T_grad_view, &temp);
+        if (error != MATRIX_SUCCESS) {
+            goto cleanup;
+        }
+        error = MatrixAddInPlace(&B_grad_view, &temp);
+        if (error != MATRIX_SUCCESS) {
+            goto cleanup;
         }
     }
+
+cleanup:
+    MatrixFree(&AT);
+    MatrixFree(&BT);
+    MatrixFree(&temp);
+    return error;
 }
 
 static MatrixError TensorBackwardInternal(Tensor *T)
@@ -320,7 +373,10 @@ static MatrixError TensorBackwardInternal(Tensor *T)
     } else if (T->op == TENSOR_OP_ADD_BIAS) {
         BackwardAddBias(T);
     } else if (T->op == TENSOR_OP_MATMUL) {
-        BackwardMatmul(T);
+        MatrixError error = BackwardMatmul(T);
+        if (error != MATRIX_SUCCESS) {
+            return error;
+        }
     } else if (T->op == TENSOR_OP_RELU) {
         BackwardRelu(T);
     } else if (T->op == TENSOR_OP_MSE) {

@@ -35,6 +35,7 @@ void TensorFree(Tensor *T);
 
 int TensorIsValid(const Tensor *T);
 void TensorSetRequiresGrad(Tensor *T, int requires_grad);
+MatrixError TensorEnsureGrad(Tensor *T);
 MatrixError TensorZeroGrad(Tensor *T);
 MatrixError TensorSGDStep(Tensor *T, REAL learning_rate);
 MatrixError TensorFillZero(Tensor *T);
